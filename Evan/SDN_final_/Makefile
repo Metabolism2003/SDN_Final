@@ -23,14 +23,19 @@ deploy:
 	docker exec onos /root/onos/bin/onos-app localhost install! /root/onos/apps/vrouter-1.0-SNAPSHOT.oar
 	# 7. Activate App
 	docker exec onos /root/onos/bin/onos-app localhost activate nycu.sdnfv.vrouter
+
 clean:
 	cd topo && sudo ./topo_utils.sh clean
+
 app:
 	cd vrouter && mvn clean install -DskipTests
 	docker cp vrouter/target/vrouter-1.0-SNAPSHOT.oar onos:/root/onos/apps/
 	docker exec onos /root/onos/bin/onos-app localhost reinstall! /root/onos/apps/vrouter-1.0-SNAPSHOT.oar
 	docker exec onos /root/onos/bin/onos-app localhost activate nycu.sdnfv.vrouter
 
-
 onos:
 	ssh -p 8101 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null onos@localhost
+
+test: 
+	cd topo && sudo ./topo_utils.sh test
+

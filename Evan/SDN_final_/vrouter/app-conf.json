@@ -1,6 +1,6 @@
 {
   "ports": {
-    "of:00002a2f85c54045/3": {
+    "of:000056e5d6ef5d4f/3": {
       "interfaces": [
         {
           "name": "ovs1 to AS65361",
@@ -20,7 +20,7 @@
   "apps": {
     "nycu.sdnfv.vrouter": {
       "router": {
-        "frrouting-cp": "of:00002a2f85c54045/2",
+        "frrouting-cp": "of:000056e5d6ef5d4f/2",
         "frrouting-mac": "fa:fc:fe:42:bc:ed",
         "gateway-ip4": "172.16.36.1",
         "gateway-ip6": "2a0b:4e07:c4:36::1",

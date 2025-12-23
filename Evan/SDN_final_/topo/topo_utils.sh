@@ -238,12 +238,63 @@ function deploy {
     set_v6intf_container $R1_CONTAINER ${VETH_OVS1R1}1 fd63::2/64
 
     # VXLAN Tunnels
+    # ============================================================
+    # Triangle requirement:
+    #  - ID 34 sets up 34 <-> 35
+    #  - ID 35 sets up 35 <-> 36
+    #  - ID 36 sets up 36 <-> 34
+    #
+    # IMPORTANT:
+    #   VXLAN remote_ip must use 192.168.60.<id> (VXLAN target subnet),
+    #   NOT 192.168.61.<id> (WireGuard interface subnet).
+    # ============================================================
     echo "Creating VXLAN Tunnels..."
-    ovs-vsctl add-port $OVS2 vxta -- set interface vxta type=vxlan options:remote_ip=192.168.60.$MYID
-    ovs-vsctl add-port $OVS2 vxpeer1 -- set interface vxpeer1 type=vxlan options:remote_ip=192.168.61.$PEERID
-    ovs-vsctl add-port $OVS2 vxpeer2 -- set interface vxpeer2 type=vxlan options:remote_ip=192.168.61.$PEER2ID
 
-    # Anycast Services
+    # Helper: add a vxlan port safely (idempotent-ish)
+    add_vxlan () {
+    local br="$1"
+    local ifname="$2"
+    local rip="$3"
+    local vni="$4"
+
+    # If port exists, delete first to avoid duplicates on redeploy
+    ovs-vsctl --if-exists del-port "$br" "$ifname"
+
+    ovs-vsctl add-port "$br" "$ifname" \
+      -- set interface "$ifname" type=vxlan \
+      options:remote_ip="$rip" \
+      options:key="$vni" \
+      options:dst_port=4789
+
+    # Safer MTU for VXLAN-over-WireGuard
+    ip link set "$ifname" mtu 1350 2>/dev/null || true
+    }
+
+    # (A) VXLAN to TA switch (keep this)
+    # TA expects each student to use 192.168.60.<MYID> as the TA-side endpoint reserved for them
+    add_vxlan "$OVS2" "vxta" "192.168.60.$MYID" 0
+    #ovs-vsctl add-port $OVS2 vxta -- set interface vxta type=vxlan options:remote_ip=192.168.60.$MYID
+
+
+    # (B) Triangle peer VXLAN (each node creates exactly one link)
+    # VNI plan: use a UNIQUE VNI per edge to avoid accidental mixing:
+    #   34-35 : 345
+    #   35-36 : 356
+    #   36-34 : 364
+    if [ "$MYID" -eq 34 ]; then
+    # 34 <-> 35
+        add_vxlan "$OVS2" "vx34to35" "192.168.60.35" 3435
+    elif [ "$MYID" -eq 35 ]; then
+        # 35 <-> 36
+        add_vxlan "$OVS2" "vx35to36" "192.168.60.36" 3536
+        # 36 <-> 34
+        add_vxlan "$OVS2" "vx36to34" "192.168.60.34" 3634
+    fi
+
+
+
+
+     # Anycast Services
     echo "Setting up Anycast servers..."
     docker run -d --name anycast1 --network=none --privileged --cap-add NET_ADMIN traefik/whoami
     pid=$(docker inspect -f '{{.State.Pid}}' anycast1)
@@ -359,6 +410,41 @@ EOF
 }
 
 # ============================================================
+# RUN TESTS
+# ============================================================
+function run_tests {
+    echo "Running Connectivity Tests..."
+    
+    echo -e "\n 1. L2 Bridge (H1 -> H2)"
+    docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.3
+
+    echo -e "\n 2. Router Interface (H1 -> FRR)"
+    docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.69
+
+    echo -e "\n 3. Anycast Service"
+    docker exec $H1_CONTAINER wget -qO- http://172.16.$MYID.100
+
+    echo -e "\n 4. Internal Routing (H1 -> H3 via R1)"
+    docker exec $H1_CONTAINER ping -c 3 172.17.$MYID.2
+
+    echo -e "\n 5. IPv6 Test"
+    docker exec $H1_CONTAINER ping6 -c 3 2a0b:4e07:c4:$MYID::3
+
+    echo -e "\n 6. ping gateway (EXPECTED TO FAIL)"
+    docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.1 || true
+
+    echo -e "\n 7. Check BGP status (FRR)"
+    docker exec $FRR_CONTAINER vtysh -c "show bgp summary"
+
+    echo -e "\n 8. ping TA router (may fail depending on TA side)"
+    docker exec $H1_CONTAINER ping -c 3 192.168.70.253 || true
+
+    echo -e "\n 9. ping peer router"
+    docker exec $H1_CONTAINER ping -c 3 172.16.$PEERID.2 || true
+    docker exec $H1_CONTAINER ping -c 3 172.16.$PEER2ID.2 || true
+}
+
+# ============================================================
 # CLEAN FUNCTION
 # ============================================================
 function clean {
@@ -399,5 +485,6 @@ case $1 in
     "clean") clean ;;
     "deploy") deploy ;;
     "gen-config") shift; gen_config $@ ;;
-    *) echo "Usage: $0 [deploy | clean | gen-config <output_file>]"; exit 1 ;;
+    "test") run_tests ;;
+    *) echo "Usage: $0 [deploy | clean | gen-config <output_file> | test]"; exit 1 ;;
 esac
