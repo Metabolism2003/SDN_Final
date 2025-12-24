@@ -35,7 +35,7 @@ OVS2=ovs2
 VETH_VXLANTA=vethvxlanta
 VETH_OVS1OVS2=vethovs1ovs2
 VETH_OVS2H1=vethovs2h1
-VETH_OVS2H2=vethovs2h2      
+VETH_OVS1H2=vethovs1h2      
 VETH_OVS1FRR=vethovs1frr
 VETH_R1H3=vethr1h3          
 VETH_OVS1R1=vethovs1r1
@@ -174,7 +174,7 @@ function deploy {
     # Start ONOS
     echo "Starting ONOS..."
     docker run -dit --privileged --hostname $ONOS_CONTAINER --name $ONOS_CONTAINER \
-        -e ONOS_APPS=drivers,openflow,fpm,gui2 \
+        -e ONOS_APPS=drivers,openflow,fpm,gui2\
         -p 2620:2620 -p 6653:6653 -p 8101:8101 -p 8181:8181 \
         --tty --interactive onosproject/onos:2.7.0
 
@@ -206,10 +206,10 @@ function deploy {
     remove_v6_autoconf $H1_CONTAINER ${VETH_OVS2H1}1
     set_v6intf_container $H1_CONTAINER ${VETH_OVS2H1}1 2a0b:4e07:c4:$MYID::2/64 2a0b:4e07:c4:$MYID::1
 
-    # Host 2 -> OVS2
-    build_ovs_container_path ${VETH_OVS2H2}0 ${VETH_OVS2H2}1 $OVS2 $H2_CONTAINER 172.16.$MYID.3/24 172.16.$MYID.1
-    remove_v6_autoconf $H2_CONTAINER ${VETH_OVS2H2}1
-    set_v6intf_container $H2_CONTAINER ${VETH_OVS2H2}1 2a0b:4e07:c4:$MYID::3/64 2a0b:4e07:c4:$MYID::1
+    # Host 2 -> OVS1
+    build_ovs_container_path ${VETH_OVS1H2}0 ${VETH_OVS1H2}1 $OVS1 $H2_CONTAINER 172.16.$MYID.3/24 172.16.$MYID.1
+    remove_v6_autoconf $H2_CONTAINER ${VETH_OVS1H2}1
+    set_v6intf_container $H2_CONTAINER ${VETH_OVS1H2}1 2a0b:4e07:c4:$MYID::3/64 2a0b:4e07:c4:$MYID::1
 
     # FRR -> OVS1 (The BGP Router)
     echo "Configuring FRR interfaces..."
@@ -284,11 +284,15 @@ function deploy {
     if [ "$MYID" -eq 34 ]; then
     # 34 <-> 35
         add_vxlan "$OVS2" "vx34to35" "192.168.60.35" 3435
+        add_vxlan "$OVS2" "vx34to36" "192.168.60.36" 3634
     elif [ "$MYID" -eq 35 ]; then
         # 35 <-> 36
         add_vxlan "$OVS2" "vx35to36" "192.168.60.36" 3536
+        add_vxlan "$OVS2" "vx35to34" "192.168.60.34" 3435
+    elif [ "$MYID" -eq 36 ]; then    
         # 36 <-> 34
         add_vxlan "$OVS2" "vx36to34" "192.168.60.34" 3634
+        add_vxlan "$OVS2" "vx36to35" "192.168.60.35" 3536
     fi
 
 
@@ -324,7 +328,7 @@ function deploy {
 }
 
 # ============================================================
-# GENERATE CONFIGURATION (2025 Simplified)
+# GENERATE CONFIGURATION (Robust Dynamic Version)
 # ============================================================
 function gen_config {
     [ -z "$1" ] && echo "Usage: gen-config <config-file>" && return 1
@@ -343,6 +347,14 @@ function gen_config {
         echo "ERROR: OVS3 not found in ONOS. Abort."
         exit 1
     fi
+
+    # --- DYNAMIC PORT LOOKUP (THE FIX) ---
+    # We ask OVS what port number it assigned to the interfaces
+    # Interface names must match what was used in 'deploy'
+    FRR_PORT=$(ovs-vsctl get Interface ${VETH_OVS1FRR}0 ofport)
+    R1_PORT=$(ovs-vsctl get Interface ${VETH_OVS1R1}0 ofport)
+    
+    echo "Detected Ports on OVS1 -> FRR: $FRR_PORT, R1: $R1_PORT"
 
     echo "DPIDS: OVS1=$OVS1_DPID, OVS2=$OVS2_DPID, OVS3=$OVS3_DPID"
 
@@ -365,14 +377,13 @@ function gen_config {
     echo "Found FRR Interface: $FRR_IF"
     echo "Found FRR MAC: $FRR_MAC"
     
-    AS65XX1_WAN_PORT=3
     AS65000_WAN_PORT=3
-    FRR_CP="${OVS1_DPID}/2"
+    FRR_CP="${OVS1_DPID}/${FRR_PORT}"  # Use dynamic port
 
     cat > "$CONF_FILE" << EOF
 {
   "ports": {
-    "${OVS1_DPID}/${AS65XX1_WAN_PORT}": {
+    "${OVS1_DPID}/${R1_PORT}": {
       "interfaces": [
         {
           "name": "ovs1 to AS65${MYID}1",
@@ -417,8 +428,10 @@ function run_tests {
     
     echo -e "\n 1. L2 Bridge (H1 -> H2)"
     docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.3
+    docker exec $H2_CONTAINER ping -c 3 172.16.$MYID.2
 
     echo -e "\n 2. Router Interface (H1 -> FRR)"
+    docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.69
     docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.69
 
     echo -e "\n 3. Anycast Service"
@@ -426,9 +439,13 @@ function run_tests {
 
     echo -e "\n 4. Internal Routing (H1 -> H3 via R1)"
     docker exec $H1_CONTAINER ping -c 3 172.17.$MYID.2
-
+    docker exec $H2_CONTAINER ping -c 3 172.17.$MYID.2
+    docker exec $H3_CONTAINER ping -c 3 172.16.$MYID.2
+    docker exec $H3_CONTAINER ping -c 3 172.16.$MYID.3
+    
     echo -e "\n 5. IPv6 Test"
     docker exec $H1_CONTAINER ping6 -c 3 2a0b:4e07:c4:$MYID::3
+    docker exec $H2_CONTAINER ping6 -c 3 2a0b:4e07:c4:$MYID::2
 
     echo -e "\n 6. ping gateway (EXPECTED TO FAIL)"
     docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.1 || true
@@ -468,7 +485,7 @@ function clean {
     ip link del ${VETH_VXLANTA}0 2>/dev/null || true
     ip link del ${VETH_OVS1OVS2}0 2>/dev/null || true
     ip link del ${VETH_OVS2H1}0 2>/dev/null || true
-    ip link del ${VETH_OVS2H2}0 2>/dev/null || true
+    ip link del ${VETH_OVS1H2}0 2>/dev/null || true
     ip link del ${VETH_OVS1FRR}0 2>/dev/null || true  
     ip link del ${VETH_R1H3}0 2>/dev/null || true    
     ip link del ${VETH_OVS1R1}0 2>/dev/null || true   
