@@ -283,16 +283,16 @@ function deploy {
     #   36-34 : 364
     if [ "$MYID" -eq 34 ]; then
     # 34 <-> 35
-        add_vxlan "$OVS2" "vx34to35" "192.168.60.35" 3435
-        add_vxlan "$OVS2" "vx34to36" "192.168.60.36" 3634
+        add_vxlan "$OVS2" "vx34to35" "192.168.61.35" 3435
+        add_vxlan "$OVS2" "vx34to36" "192.168.61.36" 3634
     elif [ "$MYID" -eq 35 ]; then
         # 35 <-> 36
-        add_vxlan "$OVS2" "vx35to36" "192.168.60.36" 3536
-        add_vxlan "$OVS2" "vx35to34" "192.168.60.34" 3435
+        add_vxlan "$OVS2" "vx35to36" "192.168.61.36" 3536
+        add_vxlan "$OVS2" "vx35to34" "192.168.61.34" 3435
     elif [ "$MYID" -eq 36 ]; then    
         # 36 <-> 34
-        add_vxlan "$OVS2" "vx36to34" "192.168.60.34" 3634
-        add_vxlan "$OVS2" "vx36to35" "192.168.60.35" 3536
+        add_vxlan "$OVS2" "vx36to34" "192.168.61.34" 3634
+        add_vxlan "$OVS2" "vx36to35" "192.168.61.35" 3536
     fi
 
 
@@ -426,37 +426,45 @@ EOF
 function run_tests {
     echo "Running Connectivity Tests..."
     
-    echo -e "\n 1. L2 Bridge (H1 -> H2)"
+    echo -e "\n 1. L2 Bridge (H1 -> H2) \n"
+    echo -e "\n H1 ping H2 \n"
     docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.3
+    echo -e "\n H2 ping H1 \n"
     docker exec $H2_CONTAINER ping -c 3 172.16.$MYID.2
 
-    echo -e "\n 2. Router Interface (H1 -> FRR)"
+    echo -e "\n 2. Router Interface (H1 -> FRR) \n"
+    echo -e "\n H1 -> FRR \n"
     docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.69
-    docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.69
+    echo -e "\n H2 -> FRR \n"
+    docker exec $H2_CONTAINER ping -c 3 172.16.$MYID.69
 
-    echo -e "\n 3. Anycast Service"
+    echo -e "\n 3. Anycast Service \n"
     docker exec $H1_CONTAINER wget -qO- http://172.16.$MYID.100
 
-    echo -e "\n 4. Internal Routing (H1 -> H3 via R1)"
+    echo -e "\n 4. Internal Routing (H1 -> H3 via R1) \n"
+    echo -e "\n H1 ping H3 \n"
     docker exec $H1_CONTAINER ping -c 3 172.17.$MYID.2
+    echo -e "\n H2 ping H3 \n"
     docker exec $H2_CONTAINER ping -c 3 172.17.$MYID.2
+    echo -e "\n H3 ping H1 \n"
     docker exec $H3_CONTAINER ping -c 3 172.16.$MYID.2
+    echo -e "\n H3 ping H2 \n"
     docker exec $H3_CONTAINER ping -c 3 172.16.$MYID.3
     
-    echo -e "\n 5. IPv6 Test"
+    echo -e "\n 5. IPv6 Test \n "
     docker exec $H1_CONTAINER ping6 -c 3 2a0b:4e07:c4:$MYID::3
     docker exec $H2_CONTAINER ping6 -c 3 2a0b:4e07:c4:$MYID::2
 
-    echo -e "\n 6. ping gateway (EXPECTED TO FAIL)"
+    echo -e "\n 6. ping gateway (EXPECTED TO FAIL)\n"
     docker exec $H1_CONTAINER ping -c 3 172.16.$MYID.1 || true
 
-    echo -e "\n 7. Check BGP status (FRR)"
+    echo -e "\n 7. Check BGP status (FRR)\n"
     docker exec $FRR_CONTAINER vtysh -c "show bgp summary"
 
-    echo -e "\n 8. ping TA router (may fail depending on TA side)"
+    echo -e "\n 8. ping TA router (may fail depending on TA side)\n"
     docker exec $H1_CONTAINER ping -c 3 192.168.70.253 || true
 
-    echo -e "\n 9. ping peer router"
+    echo -e "\n 9. ping peer router \n"
     docker exec $H1_CONTAINER ping -c 3 172.16.$PEERID.2 || true
     docker exec $H1_CONTAINER ping -c 3 172.16.$PEER2ID.2 || true
 }
