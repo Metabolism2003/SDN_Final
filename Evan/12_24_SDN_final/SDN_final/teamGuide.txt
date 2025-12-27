@@ -1,0 +1,217 @@
+SDN Final Project – Team Guide (Team 12)
+
+This guide explains exact commands to configure, deploy, and test the SDN/NFV final project.
+
+Follow steps in order.
+Do not skip the configuration steps.
+
+0. Prerequisites
+
+Linux VM (Ubuntu recommended)
+
+Docker
+
+Docker Compose
+
+Open vSwitch (OVS)
+
+WireGuard
+
+TA-provided WireGuard config file
+
+1. Team Configuration (CRITICAL)
+
+Each teammate must use a unique student ID.
+
+Step 1.1 – Set your ID
+
+From the project root:
+
+chmod +x team-config.sh
+./team-config.sh <YOUR_STUDENT_ID>
+
+
+Example:
+
+./team-config.sh 34
+
+
+⚠️ If two people use the same ID, the network will break.
+
+2. WireGuard Setup (TA Network)
+
+You must connect to the TA network before deployment.
+
+Step 2.1 – Install WireGuard config
+
+Copy the TA-provided file and name it wg0.conf:
+
+sudo cp <YOUR_TA_WG_FILE>.conf /etc/wireguard/wg0.conf
+
+
+Example:
+
+sudo cp wg_34.conf /etc/wireguard/wg0.conf
+
+Step 2.2 – Bring up WireGuard
+sudo wg-quick up wg0
+
+Step 2.3 – Verify WireGuard
+sudo wg show
+
+
+You should see:
+
+interface: wg0
+
+A recent "latest handshake" time
+
+If there is no handshake, stop here and fix WireGuard.
+
+3. Deployment
+
+Run everything from the project root (~/SDN_final).
+
+Step 3.1 – Clean old state
+sudo make clean
+
+Step 3.2 – Deploy topology
+sudo make deploy
+
+
+What this does automatically:
+
+Starts ONOS
+
+Starts FRRouting (FRR)
+
+Starts host containers
+
+Creates OVS bridges and VXLAN tunnels
+
+Generates app-conf.json
+
+Pushes config to ONOS
+
+Installs and activates the vRouter app
+
+Step 3.3 – WAIT
+
+⏳ Wait 60–90 seconds
+ONOS and BGP need time to initialize.
+
+4. Verification Tests (MUST PASS)
+4A. Local Connectivity Tests
+
+Replace <ID> with your student ID.
+
+L2 Bridge (H1 → H2)
+docker exec h1 ping -c 5 172.16.<ID>.3
+
+
+✅ Expected: success (first packet loss is normal)
+
+Router Interface (H1 → FRR)
+docker exec h1 ping -c 5 172.16.<ID>.69
+
+
+✅ Expected: success
+
+Anycast Service
+docker exec h1 wget -qO- http://172.16.<ID>.100
+
+
+✅ Expected: returns text / HTML
+
+Internal Routing (H1 → H3 via R1)
+docker exec h1 ping -c 5 172.17.<ID>.2
+
+
+✅ Expected: success
+
+IPv6 Test
+docker exec h1 ping6 -c 5 2a0b:4e07:c4:<ID>::3
+
+
+✅ Expected: success
+
+Gateway Ping (EXPECTED TO FAIL)
+docker exec h1 ping -c 3 172.16.<ID>.1
+
+
+❌ Expected: FAIL
+(This is normal — the virtual gateway does not reply to ICMP.)
+
+4B. BGP & Routing Tests (MUST PASS)
+Check BGP status (FRR)
+docker exec frr vtysh -c "show bgp summary"
+
+
+✅ Success:
+
+Neighbors show numbers in State/PfxRcd (e.g. 1, 5, 28)
+
+❌ Failure:
+
+State shows Connect, Active, or Idle
+
+Check ONOS intents
+ssh -p 8101 onos@localhost intents
+
+
+Password:
+
+rocks
+
+
+✅ Expected: intents are in INSTALLED state
+
+5. Peer & TA Testing (When Online)
+
+Replace <PEER_ID> with your teammate’s ID.
+
+Ping teammate host
+docker exec h1 ping -c 5 172.16.<PEER_ID>.2
+
+Ping TA router (may fail depending on TA side)
+docker exec h1 ping -c 5 192.168.70.253
+
+
+⚠️ Failure here does not always mean your setup is wrong.
+
+6. Common Issues & Fixes
+Nothing works at all
+sudo make clean
+sudo make deploy
+
+
+Docker / OVS sometimes gets stuck.
+
+BGP stuck in Connect or Active
+
+Check:
+
+WireGuard is up:
+
+sudo wg show
+
+
+VirtualRouter.java does NOT block ARP or L2 on FRR port
+
+Wait at least 90 seconds
+
+First packet always drops
+
+✅ Normal behavior
+Cause: ARP + ONOS reactive flow installation
+Always test with -c 5 or more.
+
+7. Final Notes
+
+Do not hard-code student IDs
+
+Only change ID via team-config.sh
+
+High ARP traffic is normal in shared VXLAN
+
+If local tests pass, your node is correct

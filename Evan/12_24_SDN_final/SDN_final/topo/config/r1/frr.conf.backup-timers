@@ -1,0 +1,18 @@
+frr defaults datacenter
+ipv6 forwarding
+!
+router bgp 65341
+ neighbor 192.168.63.1 remote-as 65340
+ neighbor fd63::1 remote-as 65340
+!
+address-family ipv4 unicast
+ neighbor 192.168.63.1 activate
+ no neighbor fd63::1 activate
+exit-address-family
+!
+address-family ipv6 unicast
+ neighbor fd63::1 activate
+ no neighbor 192.168.63.1 activate
+exit-address-family
+!
+line vty
